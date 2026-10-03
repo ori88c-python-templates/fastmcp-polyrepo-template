@@ -1,0 +1,24 @@
+---
+description: Adding authentication, JWT, sessions, HTTPBearer, Authorization, or X-Session-ID
+globs: src/app/state/**/*.py,src/app/http_routes/**/*.py,src/app/mcp_primitives/**/*.py,src/app/middlewares/**/*.py,src/app/services/**/*.py,src/app/lifecycle/**/*.py,src/app/models/**/*.py,src/app/clients/**/*.py,src/app/config/app_consts.py
+alwaysApply: false
+---
+
+# Authentication
+
+This template does not ship auth. Identity is a method argument. The shipped notes
+service takes `UserDetails` from `Depends(get_user_details)`. A later bearer-token
+check builds that object, or the fields the method already takes. Do not put a
+credential on a service `__init__`. Do not import `Request` in `services/`. Do not
+authenticate a remote MCP call with a session id or a cookie.
+
+Construct the verifier in `lifecycle/` only. No module-level security scheme or
+client. Pin signing algorithms, check audience and issuer, and do not log the
+token. A token for this server must not be accepted for another resource, and its
+scopes must match the tool.
+
+Probes and `GET /metrics` do not perform that check. If you later need a uniform
+pre-route 401, register ASGI only in `_add_middlewares_in_order`, before
+`CorrelationIdMiddleware`, exempt paths via `app_consts.py`, and talk to a
+service — never a client. The root README Authentication section says the same
+thing, as do `src/app/state/README.md` and `src/app/middlewares/README.md`.

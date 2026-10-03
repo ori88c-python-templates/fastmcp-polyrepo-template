@@ -1,0 +1,83 @@
+---
+description: Loggers are injected, never global. HTTP routes use get_http_route_logger. MCP primitive loggers are a per-feature dataclass.
+globs: src/**/*.py
+alwaysApply: false
+---
+
+# Logging
+
+Every component receives its own named child logger through its constructor.
+
+```python
+# BAD - module-level logger
+log = structlog.get_logger()
+
+class UsersService:
+    def create(self, email: str) -> None:
+        log.info("user.created", email=email)
+```
+
+```python
+# GOOD - injected
+class UsersService:
+    def __init__(self, logger: FilteringBoundLogger) -> None:  # structlog.typing
+        self._logger = logger
+
+    def create(self, email: str) -> None:
+        self._logger.info("user.created", email=email)
+
+# composition root, once per app
+users_service = UsersService(log_manager.get_child_logger("UsersService"))
+```
+
+`custom_route` lives inside `http_routes/register_<feature>.py`. See
+`registrator-funcs.mdc`. If a **custom HTTP route** logs, call
+`get_http_route_logger(request)`. Do not call `get_child_logger` inside the handler, and do not
+reach for `LogManager` on application state except through that helper. It names
+the child after `custom_route(..., name=)`. Set `name=` explicitly.
+
+An MCP primitive does not take a logger `Depends` and does not use
+`get_http_route_logger`. A typical tool, resource, or prompt delegates the work
+to a service, and that service's constructor logger is enough. Logging from the
+primitive is uncommon. When there is a real reason, declare a frozen slotted
+`<Feature>McpLoggers` in that feature's `register_<feature>.py`, one attribute
+per primitive that logs. `LifecycleManager` builds it and passes it into the
+registrator. Do not add a package-wide loggers module. `UserNotesMcpLoggers`
+is that demonstration: only `add_note` logs. A production feature may have no
+such fields.
+
+A `Depends` factory may be an async context manager. FastMCP enters it before
+the primitive body and exits it after the body returns. `get_user_details` uses
+that to bind `tenant_id` and `user_id` with `bound_contextvars` for the call.
+`LogManager` merges those contextvars, so the primitive logger and the service
+logger both pick them up. Do not add middleware for these headers. Do not pass
+`tenant_id` or `user_id` on each `info()`.
+
+```python
+@mcp.custom_route("/readyz", methods=["GET"], name="k8s-probe-router.ready")
+async def readiness_probe(request: Request) -> JSONResponse:
+    get_http_route_logger(request).info("readiness.probe")
+    ...
+```
+
+Never: `structlog.configure()`, `logging.getLogger(__name__)`, a module-level logger, or a
+component constructing its own `LogManager`. `bound_contextvars` is allowed: it writes
+task-scoped fields such as `correlation_id`, `tenant_id`, and `user_id`, and the `with`
+block unbinds them. `configure()` is the process-wide pipeline setup that stays forbidden.
+Do not log `correlation_id`, `env`, `app`, `instance`, or `app.version` as call-site kwargs;
+the manager stamps them.
+
+Uncaught errors are four `LogManager` children (`context` `uvicorn`, `asyncio`,
+`sys.excepthook`, and `fastmcp`), not a wrapper on every route. The uvicorn
+bridges and the `fastmcp` bridge are installed from `main` via
+`LifecycleManager.install_process_logging`, not from `create_app`. An unexpected
+tool, resource, or prompt failure is logged on `fastmcp`; the client receives
+the masked message. Details: `src/app/logger/README.md`.
+
+Log call style:
+
+- Message is a short lowercase dotted event name (`"redis.connect.failed"`), never an f-string.
+  Everything variable goes in kwargs so it stays queryable.
+- Never log a `SecretStr`, a `.get_secret_value()` result, or an assembled DSN.
+- Use `.exception(...)` inside `except` to attach the traceback. Uncaught hooks use
+  `.error(..., exc_info=exc)` because they are not inside the original `except`.

@@ -1,0 +1,39 @@
+---
+description: MCP methods and custom HTTP routes are registered only by register_<feature> functions.
+alwaysApply: true
+---
+
+# Registrator functions
+
+`register_<feature>(mcp, ...) -> None` is the only place that may register a custom
+HTTP route or an MCP primitive. `LifecycleManager.create_app` calls those functions
+before `http_app()`. It does not decorate methods itself.
+
+- Custom HTTP routes: `src/app/http_routes/register_<feature>.py` (`custom_route` only).
+  Example: `register_k8s_probes`.
+- MCP primitives: `src/app/mcp_primitives/register_<feature>.py` (`tool`, `resource`,
+  `prompt`, `completion`, and later spec surfaces such as tasks). Example:
+  `register_user_notes_primitives`.
+
+A feature that needs both gets one registrator in each package. The packages must
+not import each other. Readiness is the only handler that touches a client. An MCP
+primitive calls a service passed into `register_<feature>`, not loaded with `Depends`.
+Caller identity is `Depends(get_user_details)`. Primitive loggers, when any primitive
+logs, are a `<Feature>McpLoggers` argument. See `logging.mdc`.
+
+On `@mcp.tool`, pass `run_in_thread=False` when the handler and the service it calls
+do no blocking synchronous work. Leave the default only for a tool whose service
+blocks the thread. Resource and prompt decorators have no such flag.
+
+```python
+# BAD - decorated on a service, in create_app, or in the wrong package
+@mcp.tool
+async def get_order(order_id: str) -> Order: ...
+
+# GOOD - inside mcp_primitives/register_user_notes_primitives.py
+def register_user_notes_primitives(mcp, user_notes, loggers) -> None:
+    @mcp.tool(name="user-notes.add_note", run_in_thread=False)
+    async def add_note(text: str, user_details: UserDetails = Depends(get_user_details)) -> None:
+        loggers.add_note.info("user_notes.add_note")
+        await user_notes.add_note(text, user_details)
+```

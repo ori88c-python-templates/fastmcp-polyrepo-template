@@ -1,0 +1,26 @@
+---
+description: Zero global state. Only lifecycle and main construct the graph.
+alwaysApply: true
+---
+
+# Invariants
+
+`lifecycle/` is the composition root. `main.py` constructs `AppConfig` and `LifecycleManager` only.
+
+In `src/app/` except `lifecycle/` and `main.py`: never construct `AppConfig`, clients, services, `LogManager`, or collector classes. Declare them on `__init__`.
+
+MCP methods and custom HTTP routes are registered only through `register_<feature>`. See `registrator-funcs.mdc`.
+
+No module-level I/O objects, `structlog.configure()`, or defaulting collectors to the process-wide `REGISTRY`.
+
+```python
+# BAD - the service constructs its dependency
+class OrdersService:
+    def __init__(self, config: RedisConfig) -> None:
+        self._redis = RedisClient(config)
+
+# GOOD - injected
+class OrdersService:
+    def __init__(self, redis: RedisClient) -> None:
+        self._redis = redis
+```

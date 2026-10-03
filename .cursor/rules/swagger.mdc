@@ -1,0 +1,27 @@
+---
+description: Custom HTTP routes set name and include_in_schema. MCP catalog copy is decorator arguments, not the docstring.
+globs: src/app/http_routes/**/*.py,src/app/mcp_primitives/**/*.py,src/app/lifecycle/**/*.py,src/app/prometheus/**/*.py
+alwaysApply: false
+---
+
+# HTTP route schema
+
+Google docstrings are for developers. `custom_route` does not generate an OpenAPI
+document, so a docstring must not be treated as customer-facing copy.
+
+`custom_route` is called only inside `http_routes/register_<feature>.py`. See
+`registrator-funcs.mdc`. Pass `name=` and `include_in_schema=` to `mcp.custom_route`.
+`name=` is what `get_http_route_logger` copies into the log `context`. Public response
+bodies stay small JSON objects. Do not mention DI, loggers, or kubelet rationale
+in a response body.
+
+`FastMCP(version=)` is `installed_app_version()`, not `ENV`.
+
+Probes stay registered; `include_in_schema` only when `ENV` is `local` or `dev`.
+`/metrics` stays off the schema always.
+
+An MCP tool, resource, or prompt passes `description=`. That string is what the
+client lists. Omitting it publishes the docstring. Also pass `title`. A tool
+that writes passes `annotations`. A resource whose body is JSON passes
+`mime_type`. The docstring stays for developers, including implementation notes
+that must not reach the client.

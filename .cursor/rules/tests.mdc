@@ -1,0 +1,70 @@
+---
+description: Test layout and the ban on monkeypatching
+globs: tests/**/*.py
+alwaysApply: false
+---
+
+# Tests
+
+## Layout
+
+Unit tests live under `tests/unit/`, integration tests under `tests/integration/`,
+end-to-end tests under `tests/e2e/`. Within each tree, layout mirrors `src/app/`:
+one directory per package (`http_routes/`, `mcp_primitives/`, `middlewares/`, `services/`, `logger/`,
+`config/`, `distribution/`, …), then one directory per component under test, then
+one file per feature, named after that feature. Splitting by feature keeps files
+short and makes a failure name the broken behaviour before you open anything.
+Never let one file accumulate every test for a component. `prometheus/` is already
+the package, so that suite is not nested as `prometheus/prometheus/`.
+
+Integration talks to Redis via Testcontainers, not in-process doubles. End-to-end
+is HTTP through the real app (`LifecycleManager`, registrators, middleware) against the same throwaway
+store. MCP primitives use `open_mcp_client`, which speaks streamable HTTP to that app in-process.
+
+Shared fixtures go in the nearest `conftest.py`. `sink`, `log_manager`, and `throwaway_stores`
+live in `tests/conftest.py`. `throwaway_stores` is not autouse: unit tests never request it, so
+`pytest tests/unit` starts no containers. Throwaway Redis is `tests/throwaway_stores.py`.
+Integration and e2e are sibling directories, and pytest 9 rejects `pytest_plugins` in a nested
+conftest, so the container fixture stays in the root conftest rather than a plugin loaded only
+for those trees. Integration exposes a started `redis_client`; e2e exposes the HTTP `client`
+and `open_mcp_client` in `tests/e2e/mcp_primitives/conftest.py`. A later service
+or registrator reuses those rather than starting its own container.
+`tests/integration/services/user_notes_service/` is the Redis-backed service example.
+`tests/e2e/mcp_primitives/register_user_notes_primitives/` calls the same notes through
+the FastMCP client on the session app.
+
+## No monkeypatching
+
+`monkeypatch`, `unittest.mock.patch`, and reassigning module or instance attributes are
+forbidden. Patching is a smell that dependency injection is missing: either the code
+under test reaches for **global state** (module logger, process `REGISTRY`, `sys.stdout`),
+or the test **overrides a private** (`service._redis = …`) that should have been an
+`__init__` argument. Fix the production constructor; do not patch around it.
+
+Fixtures are the test composition root: construct dependencies and pass them in.
+
+```python
+# BAD - hidden global
+monkeypatch.setattr(sys, "stdout", fake)
+
+# GOOD - inject the stream
+manager = LogManager(config, env=Environment.DEV, app_version="0.1.0", stream=io.BytesIO())
+
+# BAD - private that belongs on __init__
+service._redis = fake_redis
+monkeypatch.setattr(service, "_redis", fake_redis)
+
+# GOOD - inject the client
+service = OrdersService(redis=fake_redis, logger=logger, metrics=metrics)
+```
+
+Injecting a dependency is fine: a buffer, a temp file, an in-memory implementation, or an
+`AsyncMock` constructed and handed to `AppState`. That is dependency injection, not patching.
+`AsyncMock(spec=RedisClient)` on an HTTP-route test is allowed; `patch("app.clients.redis...")` is not.
+
+## Assertions
+
+Assert on real observable output, not on whether a mock was called. A mock of the thing under test
+proves only that the test matches the implementation.
+
+Name tests as a sentence stating the guarantee: `test_records_below_the_minimum_level_are_dropped`.

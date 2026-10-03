@@ -1,0 +1,33 @@
+---
+description: Register ASGI middleware only in _add_middlewares_in_order; last added is outermost.
+globs: src/app/lifecycle/**/*.py,src/app/middlewares/**/*.py,src/app/prometheus/**/*.py,src/app/main.py
+alwaysApply: false
+---
+
+# Middleware registration order
+
+Register middleware only in `LifecycleManager._add_middlewares_in_order`. A middleware
+class never installs itself.
+
+Starlette: the last `app.add_middleware(...)` is outermost. It sees the request first
+and the response last.
+
+Order in that method, innermost first:
+
+1. `PrometheusManager.add_middleware(app)` — Prometheus. Measures the application.
+2. `CorrelationIdMiddleware` — outermost, so every inner log line has
+   `correlation_id` and every response carries `X-Request-ID`.
+
+FastMCP's `RequestContextMiddleware` is already on the app from `http_app()` and stays
+closer to the application than these two.
+
+`PrometheusManager.add_metrics_router(app, config)` mounts `GET /metrics`.
+Call it after `_add_middlewares_in_order`, once `http_app()` has returned.
+
+Do not call a library's `instrument(app)` / `setup(app)` after this method or after
+`create_app()` returns. Those helpers often call `add_middleware` implicitly.
+That silently becomes the new outermost layer.
+
+Do not wrap the app in `main` (`app = SomeASGIWrapper(app)`). That wrapper sits
+outside this middleware stack. If the library must participate in this order,
+register it in `_add_middlewares_in_order` in the intended slot.
