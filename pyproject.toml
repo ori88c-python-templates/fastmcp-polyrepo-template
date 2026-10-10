@@ -1,6 +1,6 @@
 [project]
 name = "fastmcp-polyrepo-template"
-version = "1.0.0"
+version = "1.0.2"
 description = "Production-grade FastMCP template built around dependency injection and zero global state."
 readme = "README.md"
 license = "MIT"
