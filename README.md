@@ -389,31 +389,3 @@ later change — including AI-assisted ones — copies.
 
 `X-Tenant-ID` and `X-User-ID` name the caller for logs and Redis keys. They are
 not authentication.
-
-Identity is **request-scoped**. It is a method argument, not a constructor
-dependency on a service. The shipped notes service takes `UserDetails` from
-`Depends(get_user_details)`. A later bearer-token check builds that object, or
-the fields the method already takes. A service that imports `Request` or takes a
-credential in `__init__` is the bug this layout exists to prevent.
-
-Resolve identity in the handler, not in ASGI middleware. Kubernetes probes and
-`GET /metrics` stay callable because they never perform that check. Liveness also
-omits application state. Readiness checks Redis and does not require a caller
-identity.
-
-This process is stateless streamable HTTP. A local stdio server can rely on the
-machine it runs on. This template cannot. A remote MCP server does not
-authenticate with a session id or a cookie. Each request carries its own
-credential.
-
-Verify a bearer token in a service the composition root constructed. Pin the
-signing algorithms. Check `audience` and `issuer`. Do not log the token. A token
-issued for this server must not be accepted for another resource (resource
-indicators, [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)), and its scopes
-must match the tool being called.
-
-See [`src/app/state/README.md`](src/app/state/README.md) and
-[`src/app/middlewares/README.md`](src/app/middlewares/README.md). A uniform 401
-before routing, if you add one, is registered as described in the middleware
-README.
-
