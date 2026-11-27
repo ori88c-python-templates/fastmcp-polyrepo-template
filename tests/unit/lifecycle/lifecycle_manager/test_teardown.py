@@ -5,6 +5,8 @@ from io import BytesIO
 from typing import cast
 from unittest.mock import AsyncMock
 
+from prometheus_client import CollectorRegistry
+
 from app.clients import RedisClient
 from app.config import AppConfig, Environment, RedisConfig
 from app.lifecycle import LifecycleManager
@@ -30,7 +32,8 @@ async def test_failed_redis_stop_is_logged_and_the_probe_still_stops(
     state: AppState = make_app_state(redis=cast(RedisClient, redis))
     lifecycle = LifecycleManager(
         AppConfig(ENV=Environment.DEV, redis=RedisConfig(HOST="127.0.0.1")),
-        stream=sink,
+        logger_stream=sink,
+        prometheus_collector_registry=CollectorRegistry(),
     )
     lifecycle._event_loop_lag.start()  # pyright: ignore[reportPrivateUsage]
 

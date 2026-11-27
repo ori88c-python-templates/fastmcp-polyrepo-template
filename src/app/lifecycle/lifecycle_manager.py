@@ -7,6 +7,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import BinaryIO, Final
 
 from fastmcp import FastMCP
+from prometheus_client import CollectorRegistry
 from starlette.applications import Starlette
 
 from app.clients import RedisClient
@@ -62,7 +63,13 @@ class LifecycleManager:
     is noise. Built once, in ``main``.
     """
 
-    def __init__(self, app_config: AppConfig, *, stream: BinaryIO | None = None) -> None:
+    def __init__(
+        self,
+        app_config: AppConfig,
+        *,
+        logger_stream: BinaryIO | None = None,
+        prometheus_collector_registry: CollectorRegistry | None = None,
+    ) -> None:
         """Prepare the manager and the logging every later step reports through.
 
         The ``LogManager`` is built here rather than during ``create_app`` because it is
@@ -74,9 +81,13 @@ class LifecycleManager:
         Args:
             app_config: Fully validated configuration, built by the caller so that a bad
                 environment fails before anything is constructed.
-            stream: Binary stream for the manager's log records. Production omits it
-                and records go to stdout. Tests pass a buffer so a failed close can
-                be read back.
+            logger_stream: Binary stream for the manager's log records. Production
+                omits it and records go to stdout. Tests pass a buffer so a failed
+                close can be read back.
+            prometheus_collector_registry: Collector for HTTP metrics and the lag
+                histogram. Production omits it and uses the process-wide registry.
+                Tests pass a private collector so they do not publish on that
+                registry.
         """
         self._app_config: Final = app_config
         self._app_version: Final = installed_app_version()
@@ -84,10 +95,10 @@ class LifecycleManager:
             app_config.logger,
             env=app_config.ENV,
             app_version=self._app_version,
-            stream=stream,
+            stream=logger_stream,
         )
         self._logger: Final = self._log_manager.get_child_logger(_LIFECYCLE_LOGGER_NAME)
-        self._prometheus: Final = PrometheusManager()
+        self._prometheus: Final = PrometheusManager(registry=prometheus_collector_registry)
         self._prometheus.add_http_instrumentation(
             make_inbound_request_id_instrumentation(self._prometheus.registry),
         )
