@@ -18,11 +18,13 @@ Layout mirrors `src/app/`: one directory per package, then one directory per com
 under test, then one file per feature.
 
 ```
+lifecycle/       lifecycle_manager shutdown
 http_routes/     register_k8s_probes, get_http_route_logger
 mcp_primitives/  get_user_details
 registrator_funcs/  registration calls stay in register_*.py
 middlewares/     correlation_id_middleware, unhandled_http_exception_handler
 prometheus/      HTTP metrics wiring (the package is the component)
+metrics/         event_loop_lag_monitor
 logger/          log_manager, asyncio_exception_handler, sys_excepthook,
                  uvicorn_access_log_handler, uvicorn_error_log_handler,
                  uvicorn_asgi_exception_filter

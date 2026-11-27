@@ -10,8 +10,8 @@ alwaysApply: false
 
 Unit tests live under `tests/unit/`, integration tests under `tests/integration/`,
 end-to-end tests under `tests/e2e/`. Within each tree, layout mirrors `src/app/`:
-one directory per package (`http_routes/`, `mcp_primitives/`, `middlewares/`, `services/`, `logger/`,
-`config/`, `distribution/`, …), then one directory per component under test, then
+one directory per package (`http_routes/`, `mcp_primitives/`, `middlewares/`, `metrics/`,
+`services/`, `logger/`, `config/`, `distribution/`, …), then one directory per component under test, then
 one file per feature, named after that feature. Splitting by feature keeps files
 short and makes a failure name the broken behaviour before you open anything.
 Never let one file accumulate every test for a component. `prometheus/` is already

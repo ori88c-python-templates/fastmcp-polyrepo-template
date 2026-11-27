@@ -33,7 +33,7 @@ A composition root wires clients, services, and loggers so tests inject dependen
 - **Structured JSON logging** 📡: Every line carries prod-grade fields (`app`, `instance`, `env`, `app.version`, `correlation_id`). Each component gets a named child logger with its own `context`, so you can filter easily — with grep, or with observability tools such as Groundcover, Grafana, and Datadog.
 - **Unit, integration, and e2e from day 1** 🧪: `pytest` is wired for all three: in-process units, Testcontainers against real Redis, and the real app through `LifecycleManager`. The notes slice is covered at each layer.
 - **Cursor rules that keep the conventions** 🤖: Checked-in [`.cursor/rules`](.cursor/rules) encode layers, logging, tests, and metrics so AI-assisted edits copy this architecture instead of inventing a new one.
-- **Production-shaped ops** 🚢: Non-root multi-stage image, Kubernetes liveness and readiness probes (`GET /livez`, `GET /readyz`), Prometheus scrape (`GET /metrics`), and GitHub Actions CI. HTTP-aware Prometheus series live in `prometheus/`; the notes counters live in `metrics/`.
+- **Production-shaped ops** 🚢: Non-root multi-stage image, Kubernetes liveness and readiness probes (`GET /livez`, `GET /readyz`), Prometheus scrape (`GET /metrics`, including `asyncio_event_loop_lag_seconds` so a blocked loop is a different signal from slow HTTP), and GitHub Actions CI. HTTP-aware Prometheus series live in `prometheus/`; the notes counters and the event-loop lag probe live in `metrics/`.
 - **Supply-chain hygiene** 🔒: SHA-pinned Actions, weekly Dependabot for the `uv` lockfile and GitHub Actions, and a separate `uv audit` workflow on push/PR plus a weekly schedule so a CVE published while `main` is idle still fails the Audit badge.
 
 ## Why this template
@@ -121,7 +121,7 @@ with `|` (`http_routes | mcp_primitives | middlewares | prometheus`) are the sib
 | `src/app/lifecycle/` | The composition root: `LifecycleManager`, startup and shutdown |
 | `src/app/state/` | Typed `AppState` and the accessors handlers call |
 | `src/app/logger/` | `LogManager`, the factory for injectable structured child loggers |
-| `src/app/metrics/` | Prometheus collectors injected into services; not HTTP-aware |
+| `src/app/metrics/` | Prometheus collectors injected into services, plus the event-loop lag probe; not HTTP-aware |
 | `src/app/distribution/` | Installed dist metadata for the `app` import (`app.version`) |
 | `src/app/models/` | Shared Pydantic models used by services and registrators |
 | `src/app/clients/` | Data access clients for Redis and external APIs |

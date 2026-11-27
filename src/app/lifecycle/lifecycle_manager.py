@@ -2,9 +2,9 @@
 
 import asyncio
 import sys
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from typing import Final
+from typing import BinaryIO, Final
 
 from fastmcp import FastMCP
 from starlette.applications import Starlette
@@ -22,7 +22,7 @@ from app.logger import (
     make_sys_excepthook,
 )
 from app.mcp_primitives import UserNotesMcpLoggers, register_user_notes_primitives
-from app.metrics import UserNotesMetrics
+from app.metrics import EventLoopLagMonitor, UserNotesMetrics
 from app.middlewares import (
     CorrelationIdMiddleware,
     make_unhandled_http_exception_handler,
@@ -62,16 +62,21 @@ class LifecycleManager:
     is noise. Built once, in ``main``.
     """
 
-    def __init__(self, app_config: AppConfig) -> None:
+    def __init__(self, app_config: AppConfig, *, stream: BinaryIO | None = None) -> None:
         """Prepare the manager and the logging every later step reports through.
 
         The ``LogManager`` is built here rather than during ``create_app`` because it is
         the one dependency the manager itself needs: it has to be able to log the
-        construction of everything else, including the failures.
+        construction of everything else, including the failures. The event-loop lag
+        histogram is registered here too. It does not need a running loop; the probe
+        task starts in ``_init_by_topological_order``.
 
         Args:
             app_config: Fully validated configuration, built by the caller so that a bad
                 environment fails before anything is constructed.
+            stream: Binary stream for the manager's log records. Production omits it
+                and records go to stdout. Tests pass a buffer so a failed close can
+                be read back.
         """
         self._app_config: Final = app_config
         self._app_version: Final = installed_app_version()
@@ -79,11 +84,15 @@ class LifecycleManager:
             app_config.logger,
             env=app_config.ENV,
             app_version=self._app_version,
+            stream=stream,
         )
         self._logger: Final = self._log_manager.get_child_logger(_LIFECYCLE_LOGGER_NAME)
         self._prometheus: Final = PrometheusManager()
         self._prometheus.add_http_instrumentation(
             make_inbound_request_id_instrumentation(self._prometheus.registry),
+        )
+        self._event_loop_lag: Final = EventLoopLagMonitor(
+            registry=self._prometheus.registry,
         )
 
     def create_app(self) -> Starlette:
@@ -232,7 +241,9 @@ class LifecycleManager:
 
             Installs the asyncio unhandled-exception hook on the running loop for
             the lifetime of this context, and restores the previous handler after
-            teardown so ``stop()`` failures still get structured ``asyncio`` logs.
+            teardown so client ``stop()`` failures still get structured ``asyncio``
+            logs. Teardown runs even when startup fails, so a probe or client that
+            opened before the failure is still released.
 
             Args:
                 _server: The FastMCP server entering its lifespan. Unused: Redis
@@ -252,14 +263,14 @@ class LifecycleManager:
                 )
             )
             try:
-                await self._init_by_topological_order(app_state)
                 try:
+                    await self._init_by_topological_order(app_state)
                     # Empty on purpose. LifecycleManager is the only composition
                     # root, so a non-empty dict would duplicate typed AppState.
                     yield {}
                 finally:
-                    # A crash while serving still has to release connections, so teardown
-                    # belongs in `finally` rather than merely after the yield.
+                    # A crash while serving, or a failed startup, still has to release
+                    # what opened. Teardown belongs in `finally` rather than after yield.
                     await self._teardown_by_reverse_topological_order(app_state)
             finally:
                 loop.set_exception_handler(previous_handler)
@@ -271,35 +282,61 @@ class LifecycleManager:
 
         Connection pools cannot be opened in ``_build_app_state`` because there is no
         running event loop yet, so construction and connection are deliberately separate
-        steps. Redis is the only client, and it is started to match the field
-        order on ``AppClients``.
+        steps. The event-loop lag probe starts first. It depends on nothing, and
+        Redis does not depend on it; first means a blocking connect is visible in
+        the histogram. Redis is the only client, and it is started next to match
+        the field order on ``AppClients``.
 
         Args:
             app_state: The state whose clients are being started.
         """
         self._logger.info("lifecycle.resources.initializing")
 
+        self._event_loop_lag.start()
         await app_state.clients.redis.start()
 
     async def _teardown_by_reverse_topological_order(self, app_state: AppState) -> None:
         """Release every resource, in the exact reverse of the startup order.
 
         Reverse order is what makes shutdown graceful: a resource is only closed once
-        everything that might still call it is already gone.
+        everything that might still call it is already gone. The lag probe stops after
+        Redis, so a blocking disconnect is still sampled, and before the log flush.
+        ``stop`` is safe when ``start`` never ran.
 
-        The log manager is flushed last for the same reason. It is what everything else
-        logs through, so draining it earlier would discard the records written while the
-        remaining resources shut down.
+        Each close is independent. ``_close_resource`` logs a failure and returns, so
+        one resource that does not close does not skip the rest and does not add
+        another ``finally`` level. The log manager is flushed last, outside that
+        helper. It is what everything else logs through, so draining it earlier would
+        discard the failure record. A failed flush still propagates: there is no
+        later logger to report it.
 
         Args:
             app_state: The state being torn down.
         """
         self._logger.info("lifecycle.resources.tearing_down")
 
+        await self._close_resource("redis", app_state.clients.redis.stop)
+        await self._close_resource("event_loop_lag", self._event_loop_lag.stop)
+        app_state.log_manager.flush()
+
+    async def _close_resource(
+        self,
+        resource: str,
+        close: Callable[[], Awaitable[None]],
+    ) -> None:
+        """Close one resource and keep shutting down if it fails.
+
+        ``Exception`` is caught. ``CancelledError`` and ``KeyboardInterrupt`` are
+        ``BaseException`` and still propagate.
+
+        Args:
+            resource: Short name stamped on the failure log, such as ``"redis"``.
+            close: The resource's ``stop`` coroutine function, already bound.
+        """
         try:
-            await app_state.clients.redis.stop()
-        finally:
-            app_state.log_manager.flush()
+            await close()
+        except Exception:
+            self._logger.exception("lifecycle.resource.stop_failed", resource=resource)
 
     def _add_middlewares_in_order(self, app: Starlette) -> None:
         """Register middleware, outermost last.

@@ -42,7 +42,8 @@ hides the text from the client, and `install_process_logging` bridges the
 
 HTTP Prometheus (`add_middleware`, `add_metrics_router`, HTTP-aware series) lives in
 [`prometheus/`](../prometheus/README.md), a sibling of this package. Collectors that
-services increment live in [`metrics/`](../metrics/README.md).
+services increment, and the event-loop lag probe, live in
+[`metrics/`](../metrics/README.md).
 
 ## Does not belong here
 
